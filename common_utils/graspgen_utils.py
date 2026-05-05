@@ -1,6 +1,7 @@
 import numpy as np
 import logging
 import os
+import sys
 import atexit
 import subprocess
 import signal
@@ -8,6 +9,7 @@ import time
 import webbrowser
 import platform
 import tkinter as tk
+from pathlib import Path
 from threading import Thread
 import queue
 from grasp_gen.grasp_server import GraspGenSampler, load_grasp_cfg
@@ -20,6 +22,43 @@ from grasp_gen.utils.meshcat_utils import (
 )
 from grasp_gen.utils.point_cloud_utils import filter_colliding_grasps
 from common_utils.actions_format_checker import MoveItem
+
+
+# IP-Adapter integration: GraspGenSamplerIP lives in the user's GraspGen fork
+# at scripts/demo_object_mesh_ip.py (not a proper grasp_gen submodule yet).
+# Lazy-load on first use so vanilla flows don't pay the import cost.
+_GraspGenSamplerIP = None
+_FORK_SCRIPTS_DIR = "/ssd1/CT_GraspGen/GraspGen/scripts"
+
+
+def _lazy_load_GraspGenSamplerIP():
+    global _GraspGenSamplerIP
+    if _GraspGenSamplerIP is not None:
+        return _GraspGenSamplerIP
+    if _FORK_SCRIPTS_DIR not in sys.path:
+        sys.path.insert(0, _FORK_SCRIPTS_DIR)
+    from demo_object_mesh_ip import GraspGenSamplerIP
+    _GraspGenSamplerIP = GraspGenSamplerIP
+    return _GraspGenSamplerIP
+
+
+def compute_physical_features(obj_pc: np.ndarray, gravity_local: np.ndarray) -> np.ndarray:
+    """
+    12D physical features for IP-Adapter conditioning, matching v2_r095 training
+    convention (dataset_full = unit eigenvectors).
+
+    Layout: [pca_features (9), gravity_local (3)] where pca.reshape(3,3) has
+    rows = unit eigenvectors sorted by eigenvalue descending.
+    """
+    centered = obj_pc - obj_pc.mean(axis=0)
+    cov = np.cov(centered, rowvar=False)
+    eigvals, eigvecs = np.linalg.eigh(cov)
+    order = np.argsort(eigvals)[::-1]
+    eigvecs_sorted = eigvecs[:, order]
+    pca_features = eigvecs_sorted.T.flatten()
+    physical_features = np.concatenate([pca_features, np.asarray(gravity_local)]).astype(np.float32)
+    assert physical_features.shape == (12,), physical_features.shape
+    return physical_features
 
 logger = logging.getLogger(__name__)
 
@@ -357,15 +396,49 @@ class GraspGeneratorUI:
         num_grasps,
         topk_num_grasps,
         need_GUI=False,
+        ip_config: str | None = None,
+        ip_ckpt: str | None = None,
+        force_no_ip: bool = False,
+        gravity_local: tuple[float, float, float] = (0.0, 0.0, -1.0),
     ):
-        self.grasp_cfg = load_grasp_cfg(gripper_config)
-        self.gripper_name: str = self.grasp_cfg.data.gripper_name
-        self.grasp_sampler = GraspGenSampler(self.grasp_cfg)
+        """
+        Args:
+            gripper_config: vanilla path. Used when ip_config is None, OR as the
+                gripper YAML for build vanilla GraspGenSampler.
+            ip_config: path to IP-Adapter training config.yaml (e.g.
+                .../v2_abs_r095/config.yaml). Triggers IP-Adapter mode.
+            ip_ckpt: path to IP-Adapter .pth (e.g. .../v2_abs_r095/last.pth).
+                Required if ip_config is set.
+            force_no_ip: load ip_ckpt but skip patching IP-Adapter layers
+                (vanilla model with whatever ckpt provided). Useful for ablation,
+                NOT a real baseline — see scripts/local_graspgen_ip.py docstring.
+            gravity_local: 3D world -Z direction in object/world frame.
+                Used only in IP-Adapter mode. Default (0,0,-1) assumes Z-up.
+        """
+        self.use_ip_adapter: bool = ip_config is not None
+        self.gravity_local = np.asarray(gravity_local, dtype=np.float32)
         self.grasp_threshold: float = grasp_threshold
         self.num_grasps: int = num_grasps
         self.topk_num_grasps: int = topk_num_grasps
         self.need_GUI: bool = need_GUI
         self.scene_data: dict
+
+        if self.use_ip_adapter:
+            from omegaconf import OmegaConf
+            if ip_ckpt is None:
+                raise ValueError("ip_ckpt is required when ip_config is set")
+            logger.warning(f"[IP-Adapter] config={ip_config} ckpt={ip_ckpt} force_no_ip={force_no_ip}")
+            self.grasp_cfg = OmegaConf.load(ip_config)
+            OmegaConf.set_struct(self.grasp_cfg, False)
+            self.grasp_cfg.eval.checkpoint = ip_ckpt
+            self.gripper_name: str = self.grasp_cfg.data.gripper_name
+            SamplerIP = _lazy_load_GraspGenSamplerIP()
+            self.grasp_sampler = SamplerIP(self.grasp_cfg, force_no_ip=force_no_ip)
+        else:
+            self.grasp_cfg = load_grasp_cfg(gripper_config)
+            self.gripper_name: str = self.grasp_cfg.data.gripper_name
+            self.grasp_sampler = GraspGenSampler(self.grasp_cfg)
+
         ## Main init starts here
         if self.need_GUI:
             start_meshcat_server()
@@ -374,20 +447,28 @@ class GraspGeneratorUI:
 
     def _generate_grasps(self) -> tuple[np.array, np.array]:
         obj_name = self.move.target_name
-        obj_pc = self.scene_data["object_infos"][obj_name]["points"]
+        obj_pc = np.asarray(self.scene_data["object_infos"][obj_name]["points"])
         qualifier_name = self.move.qualifier
-        # mass_center = np.mean(obj_pc, axis=0)
-        # std = np.std(obj_pc, axis=0)
-        grasps, grasp_conf = GraspGenSampler.run_inference(
-            obj_pc,
-            self.grasp_sampler,
-            grasp_threshold=0.8,
-            num_grasps=200,
-            # topk_num_grasps=5,
-            min_grasps=80,
-            max_tries=20,
-        )
-        grasps = grasps.cpu().numpy()
+
+        if self.use_ip_adapter:
+            physical_features = compute_physical_features(obj_pc, self.gravity_local)
+            grasps, grasp_conf = self.grasp_sampler.sample(
+                obj_pc,
+                physical_features,
+                threshold=-1.0,
+                num_grasps=self.num_grasps,
+                remove_outliers=False,
+            )
+        else:
+            grasps, grasp_conf = GraspGenSampler.run_inference(
+                obj_pc,
+                self.grasp_sampler,
+                grasp_threshold=0.8,
+                num_grasps=200,
+                min_grasps=80,
+                max_tries=20,
+            )
+        grasps = grasps.cpu().numpy() if hasattr(grasps, "cpu") else np.asarray(grasps)
         grasps[:, 3, 3] = 1
         grasps = flip_upside_down_grasps(grasps)
         min_point = np.percentile(obj_pc, 3, axis=0)

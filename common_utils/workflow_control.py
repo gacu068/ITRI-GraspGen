@@ -30,12 +30,22 @@ class BaseWorkflowController:
         self.sender = sender
         self.receiver = receiver
         self.pc_generator = PointCloudGenerator(self.args)
+        # Optional IP-Adapter mode (getattr keeps older callers without these args working).
+        ip_config = getattr(args, "ip_config", None)
+        ip_ckpt = getattr(args, "ip_ckpt", None)
+        force_no_ip = getattr(args, "force_no_ip", False)
+        gravity_str = getattr(args, "gravity", "0,0,-1")
+        gravity_local = tuple(float(x) for x in gravity_str.split(","))
         self.grasp_generator = GraspGeneratorUI(
             args.gripper_config,
             args.grasp_threshold,
             args.num_grasps,
             args.topk_num_grasps,
             args.need_confirm,
+            ip_config=ip_config,
+            ip_ckpt=ip_ckpt,
+            force_no_ip=force_no_ip,
+            gravity_local=gravity_local,
         )
         logger.info("======Successfully initialized======")
 

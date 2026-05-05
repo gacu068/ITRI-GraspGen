@@ -121,6 +121,31 @@ def parse_args():
         default="",
         help="Use exisiting images at sample_data/zed_images instead of the real zed camera",
     )
+    parser.add_argument(
+        "--ip_config",
+        type=str,
+        default=None,
+        help="Path to IP-Adapter training config.yaml (e.g. v2_abs_r095/config.yaml). "
+             "Triggers IP-Adapter mode in GraspGeneratorUI.",
+    )
+    parser.add_argument(
+        "--ip_ckpt",
+        type=str,
+        default=None,
+        help="Path to IP-Adapter checkpoint .pth. Required when --ip_config is set.",
+    )
+    parser.add_argument(
+        "--force_no_ip",
+        action="store_true",
+        help="Load IP-Adapter ckpt but skip patching layers (ablation).",
+    )
+    parser.add_argument(
+        "--gravity",
+        type=str,
+        default="0,0,-1",
+        help="Comma-separated 3D gravity direction in robot-world frame for IP-Adapter "
+             "conditioning. Default (0,0,-1) assumes lab-calibrated Z-up world.",
+    )
     return parser.parse_args()
 
 
