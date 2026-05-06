@@ -2,6 +2,10 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+> If working on the IP-Adapter integration (branch `CT_adapter`), also read
+> [`CLAUDE_IP_ADAPTER.md`](./CLAUDE_IP_ADAPTER.md) for branch-specific
+> architecture, deployment risks, and anti-patterns.
+
 ## Critical Rules
 
 1. **Do NOT run `.py` scripts.** Scripts here are heavy (Isaac Sim, ROS2, large ML models) and require specific live environments. The user runs and terminates them manually.
