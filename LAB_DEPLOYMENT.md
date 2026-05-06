@@ -242,6 +242,51 @@ cd ~/ITRI-GraspGen/ROS2_server && /usr/bin/python3 gripper_server.py
 clear, e-stop is reachable, and you've reviewed the trajectory in the
 Isaac Sim window first.
 
+### 6d. Fallback path: `workflow_with_gui.py` (no Isaac Sim, no cuRobo)
+
+If Isaac Sim or cuRobo isn't installed/working yet, or you want a
+faster-iteration debug loop without three processes, the GUI workflow
+drives the arm directly via `send_moves_to_robot()` over ROS2.
+
+```bash
+# Terminal 1: TM driver (or stop here if no real arm)
+ros2 run tm_driver tm_driver robot_ip:=192.168.1.10
+
+# Terminal 2: real gripper server
+cd ~/ITRI-GraspGen/ROS2_server && /usr/bin/python3 gripper_server.py
+
+# Terminal 3: GraspGen + GUI workflow with IP-Adapter
+cd ~/ITRI-GraspGen
+source scripts/setup_ip_adapter.env
+uv run scripts/workflow_with_gui.py \
+    --ip_config "$IP_ADAPTER_CONFIG" --ip_ckpt "$IP_ADAPTER_CKPT"
+# At the prompt, type the action name (e.g. Grasp_and_Dump)
+```
+
+#### Trade-offs vs the full `workflow_with_isaacsim.py`
+
+| Aspect | `workflow_with_gui.py` | `workflow_with_isaacsim.py` |
+|---|---|---|
+| Process count | 2 (ROS2 + this) | 3 (+ Isaac Sim) |
+| Motion planning | ❌ direct EE pose → tm_driver | ✅ cuRobo |
+| Collision checking | ❌ none | ✅ scene PC + cuRobo |
+| Action format | `actions["actions"]` v1028 | `TaskConfig` (new) |
+| Action dispatch | `act()` | `act_with_name()` |
+| Best for | Quick demos, clean tabletop | Production, cluttered scenes |
+
+#### When to use the fallback
+
+- ✅ Initial sanity check that "real arm + IP-Adapter grasp" loop works at all
+- ✅ Debugging the IP-Adapter output independent of motion-planning issues
+- ✅ Demos where the workspace is clean and grasps approach top-down
+- ❌ Anything where the gripper might collide with something on its way to
+      the grasp pose — there's no planner to route around obstacles
+
+⚠️ **Without cuRobo, every grasp pose IP-Adapter outputs is sent
+directly to the arm**. Faulty / outlier grasps that the full pipeline
+would have rejected via collision filtering can still reach the
+hardware here. Run with the workspace very clear the first few times.
+
 ---
 
 ## 7. IP-Adapter-specific gotchas
