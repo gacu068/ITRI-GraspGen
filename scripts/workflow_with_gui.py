@@ -103,6 +103,30 @@ def parse_args():
         action="store_true",
         help="decide if we need confirm for groundingDINO detect and grasp Generation",
     )
+    parser.add_argument(
+        "--ip_config",
+        type=str,
+        default=None,
+        help="Path to IP-Adapter training config.yaml. Triggers IP-Adapter mode.",
+    )
+    parser.add_argument(
+        "--ip_ckpt",
+        type=str,
+        default=None,
+        help="Path to IP-Adapter checkpoint .pth. Required when --ip_config is set.",
+    )
+    parser.add_argument(
+        "--force_no_ip",
+        action="store_true",
+        help="Load IP-Adapter ckpt but skip patching layers (ablation).",
+    )
+    parser.add_argument(
+        "--gravity",
+        type=str,
+        default="0,0,-1",
+        help="Comma-separated 3D gravity direction in robot-world frame for "
+             "IP-Adapter conditioning. Default (0,0,-1) assumes Z-up world.",
+    )
     return parser.parse_args()
 
 
@@ -114,12 +138,17 @@ def main():
     project_root_dir = os.path.dirname(current_file_dir)
     try:
         pc_generator = PointCloudGenerator(args)
+        gravity_local = tuple(float(x) for x in args.gravity.split(","))
         grasp_generator = GraspGeneratorUI(
             args.gripper_config,
             args.grasp_threshold,
             args.num_grasps,
             args.topk_num_grasps,
             not args.no_confirm,
+            ip_config=args.ip_config,
+            ip_ckpt=args.ip_ckpt,
+            force_no_ip=args.force_no_ip,
+            gravity_local=gravity_local,
         )
         while True:
             print("Please provide the <name> of actions to start, or type end to end.")
