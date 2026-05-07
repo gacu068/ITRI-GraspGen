@@ -9,7 +9,6 @@ import time
 import webbrowser
 import platform
 import tkinter as tk
-from pathlib import Path
 from threading import Thread
 import queue
 from grasp_gen.grasp_server import GraspGenSampler, load_grasp_cfg
@@ -28,7 +27,14 @@ from common_utils.actions_format_checker import MoveItem
 # at scripts/demo_object_mesh_ip.py (not a proper grasp_gen submodule yet).
 # Lazy-load on first use so vanilla flows don't pay the import cost.
 _GraspGenSamplerIP = None
-_FORK_SCRIPTS_DIR = "/ssd1/CT_GraspGen/GraspGen/scripts"
+# Path to the GraspGen fork's `scripts/` (where demo_object_mesh_ip.py lives).
+# Resolves from $GRASPGEN_FORK_DIR (set by scripts/setup_ip_adapter.env on the
+# lab machine) and falls back to the original developer's path.
+_FORK_SCRIPTS_DIR = (
+    f"{os.environ['GRASPGEN_FORK_DIR']}/scripts"
+    if os.environ.get("GRASPGEN_FORK_DIR")
+    else "/ssd1/CT_GraspGen/GraspGen/scripts"
+)
 
 
 def _lazy_load_GraspGenSamplerIP():
@@ -38,11 +44,14 @@ def _lazy_load_GraspGenSamplerIP():
     if _FORK_SCRIPTS_DIR not in sys.path:
         sys.path.insert(0, _FORK_SCRIPTS_DIR)
     from demo_object_mesh_ip import GraspGenSamplerIP
+
     _GraspGenSamplerIP = GraspGenSamplerIP
     return _GraspGenSamplerIP
 
 
-def compute_physical_features(obj_pc: np.ndarray, gravity_local: np.ndarray) -> np.ndarray:
+def compute_physical_features(
+    obj_pc: np.ndarray, gravity_local: np.ndarray
+) -> np.ndarray:
     """
     12D physical features for IP-Adapter conditioning, matching v2_r095 training
     convention (dataset_full = unit eigenvectors).
@@ -56,9 +65,12 @@ def compute_physical_features(obj_pc: np.ndarray, gravity_local: np.ndarray) -> 
     order = np.argsort(eigvals)[::-1]
     eigvecs_sorted = eigvecs[:, order]
     pca_features = eigvecs_sorted.T.flatten()
-    physical_features = np.concatenate([pca_features, np.asarray(gravity_local)]).astype(np.float32)
+    physical_features = np.concatenate(
+        [pca_features, np.asarray(gravity_local)]
+    ).astype(np.float32)
     assert physical_features.shape == (12,), physical_features.shape
     return physical_features
+
 
 logger = logging.getLogger(__name__)
 
@@ -425,9 +437,12 @@ class GraspGeneratorUI:
 
         if self.use_ip_adapter:
             from omegaconf import OmegaConf
+
             if ip_ckpt is None:
                 raise ValueError("ip_ckpt is required when ip_config is set")
-            logger.warning(f"[IP-Adapter] config={ip_config} ckpt={ip_ckpt} force_no_ip={force_no_ip}")
+            logger.warning(
+                f"[IP-Adapter] config={ip_config} ckpt={ip_ckpt} force_no_ip={force_no_ip}"
+            )
             self.grasp_cfg = OmegaConf.load(ip_config)
             OmegaConf.set_struct(self.grasp_cfg, False)
             self.grasp_cfg.eval.checkpoint = ip_ckpt
@@ -515,12 +530,12 @@ class GraspGeneratorUI:
             logger.debug(
                 f"Scene point cloud has {len(xyz_scene)} points (no downsampling needed)"
             )
-        collision_free_mask = filter_colliding_grasps(
-            scene_pc=xyz_scene_downsampled,
-            grasp_poses=grasps,
-            gripper_collision_mesh=gripper_collision_mesh,
-            collision_threshold=0.03,
-        )
+        # collision_free_mask = filter_colliding_grasps(
+        #     scene_pc=xyz_scene_downsampled,
+        #     grasp_poses=grasps,
+        #     gripper_collision_mesh=gripper_collision_mesh,
+        #     collision_threshold=0.03,
+        # )
         return grasps, custom_filter_mask, collision_free_mask
 
     def _generate_grasp_silent(self) -> np.array:

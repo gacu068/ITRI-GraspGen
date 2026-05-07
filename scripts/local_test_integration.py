@@ -15,6 +15,7 @@ Usage:
 import argparse
 import json
 import logging
+import os
 import sys
 import types
 from pathlib import Path
@@ -28,7 +29,11 @@ def _install_pyzed_stub() -> None:
 
     class _Mat:
         def __init__(self, w=None, h=None, mat_type=None, mem=None):
-            self._data = np.zeros((1, 1, 3), dtype=np.uint8) if w is None else np.zeros((h, w, 3), dtype=np.uint8)
+            self._data = (
+                np.zeros((1, 1, 3), dtype=np.uint8)
+                if w is None
+                else np.zeros((h, w, 3), dtype=np.uint8)
+            )
 
         def get_data(self):
             return self._data
@@ -41,7 +46,12 @@ def _install_pyzed_stub() -> None:
     sl.Mat = _Mat
     for _name in ("MAT_TYPE", "MEM", "ERROR_CODE", "RESOLUTION", "DEPTH_MODE", "VIEW"):
         setattr(sl, _name, _Enum())
-    for _name in ("Camera", "InitParameters", "Transform", "PositionalTrackingParameters"):
+    for _name in (
+        "Camera",
+        "InitParameters",
+        "Transform",
+        "PositionalTrackingParameters",
+    ):
         setattr(sl, _name, type(_name, (), {}))
 
     pyzed = types.ModuleType("pyzed")
@@ -80,6 +90,14 @@ TRANSFORM_DIR = PROJECT_ROOT_DIR / "PointCloud_Generation" / "transform_config"
 V2_R095_LOG_DIR = Path(
     "/ssd1/CT_GraspGen/GraspGen_Results/logs/robotiq_2f_140_r095_ip_v2_abs_r095"
 )
+# Resolve --ip_config / --ip_ckpt defaults from $IP_ADAPTER_CONFIG /
+# $IP_ADAPTER_CKPT (set by scripts/setup_ip_adapter.env), fallback to V2_R095_LOG_DIR.
+_IP_CONFIG_DEFAULT = os.environ.get("IP_ADAPTER_CONFIG") or str(
+    V2_R095_LOG_DIR / "config.yaml"
+)
+_IP_CKPT_DEFAULT = os.environ.get("IP_ADAPTER_CKPT") or str(
+    V2_R095_LOG_DIR / "last.pth"
+)
 
 
 def parse_args():
@@ -99,8 +117,8 @@ def parse_args():
     parser.add_argument("--grasp_threshold", type=float, default=0.70)
     parser.add_argument("--num_grasps", type=int, default=200)
     parser.add_argument("--topk_num_grasps", type=int, default=5)
-    parser.add_argument("--ip_config", type=str, default=str(V2_R095_LOG_DIR / "config.yaml"))
-    parser.add_argument("--ip_ckpt", type=str, default=str(V2_R095_LOG_DIR / "last.pth"))
+    parser.add_argument("--ip_config", type=str, default=_IP_CONFIG_DEFAULT)
+    parser.add_argument("--ip_ckpt", type=str, default=_IP_CKPT_DEFAULT)
     parser.add_argument("--gravity", type=str, default="0,0,-1")
     parser.add_argument("--target", type=str, default="green cup")
     parser.add_argument("--qualifier", type=str, default="cup_qualifier")
@@ -114,7 +132,11 @@ def ensure_transform_config(name: str) -> None:
     logger.warning(f"{path} not found; writing identity transform")
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path, "w") as f:
-        json.dump({"tx": 0.0, "ty": 0.0, "tz": 0.0, "rr": 0.0, "rp": 0.0, "ry": 0.0}, f, indent=2)
+        json.dump(
+            {"tx": 0.0, "ty": 0.0, "tz": 0.0, "rr": 0.0, "rp": 0.0, "ry": 0.0},
+            f,
+            indent=2,
+        )
 
 
 def main():
@@ -128,7 +150,9 @@ def main():
     pc_generator = PointCloudGenerator(args)
     try:
         scene_data = pc_generator.generate_pointcloud(
-            target_names=[args.target], blockages=[], valid_region=None,
+            target_names=[args.target],
+            blockages=[],
+            valid_region=None,
         )
     finally:
         try:
@@ -136,14 +160,16 @@ def main():
         except AttributeError:
             pass
 
-    scene_data = silent_transform_multiple_obj_with_name_dict(scene_data, args.transform_config)
+    scene_data = silent_transform_multiple_obj_with_name_dict(
+        scene_data, args.transform_config
+    )
     extra_obstacles = load_extra_obstacles()
     scene_data = create_obstacle_info(scene_data, extra_obstacles)
 
     # 2. Construct GraspGeneratorUI in IP-Adapter mode (THE INTEGRATION PATH)
     logger.warning(f"Building GraspGeneratorUI with ip_ckpt={args.ip_ckpt}")
     grasp_ui = GraspGeneratorUI(
-        gripper_config=args.gripper_config,   # ignored when ip_config is set
+        gripper_config=args.gripper_config,  # ignored when ip_config is set
         grasp_threshold=args.grasp_threshold,
         num_grasps=args.num_grasps,
         topk_num_grasps=args.topk_num_grasps,
@@ -191,10 +217,18 @@ def main():
 
     # Cyan to distinguish from the smoke script's purple
     for i, g in enumerate(all_grasps):
-        visualize_grasp(vis, f"grasps/{i:03d}", g, color=[0, 200, 200],
-                        gripper_name=grasp_ui.gripper_name, linewidth=1.5)
+        visualize_grasp(
+            vis,
+            f"grasps/{i:03d}",
+            g,
+            color=[0, 200, 200],
+            gripper_name=grasp_ui.gripper_name,
+            linewidth=1.5,
+        )
 
-    print(f"Visualized {len(all_grasps)} grasps via GraspGeneratorUI integration path (cyan).")
+    print(
+        f"Visualized {len(all_grasps)} grasps via GraspGeneratorUI integration path (cyan)."
+    )
     input("Press Enter to exit ...")
 
 

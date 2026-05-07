@@ -22,6 +22,7 @@ code is reachable. `uv sync` will overwrite that redirect; re-apply with:
 import argparse
 import json
 import logging
+import os
 import sys
 import types
 from pathlib import Path
@@ -36,7 +37,11 @@ def _install_pyzed_stub() -> None:
 
     class _Mat:
         def __init__(self, w=None, h=None, mat_type=None, mem=None):
-            self._data = np.zeros((1, 1, 3), dtype=np.uint8) if w is None else np.zeros((h, w, 3), dtype=np.uint8)
+            self._data = (
+                np.zeros((1, 1, 3), dtype=np.uint8)
+                if w is None
+                else np.zeros((h, w, 3), dtype=np.uint8)
+            )
 
         def get_data(self):
             return self._data
@@ -87,8 +92,15 @@ from grasp_gen.utils.meshcat_utils import (  # noqa: E402
 )
 
 # scripts/demo_object_mesh_ip.py is in the fork, not on sys.path. Pull
-# GraspGenSamplerIP via direct import from its file.
-sys.path.insert(0, "/ssd1/CT_GraspGen/GraspGen/scripts")
+# GraspGenSamplerIP via direct import from its file. Resolves from
+# $GRASPGEN_FORK_DIR (set by scripts/setup_ip_adapter.env) with fallback to
+# the original developer's path.
+_FORK_SCRIPTS_DIR = (
+    f"{os.environ['GRASPGEN_FORK_DIR']}/scripts"
+    if os.environ.get("GRASPGEN_FORK_DIR")
+    else "/ssd1/CT_GraspGen/GraspGen/scripts"
+)
+sys.path.insert(0, _FORK_SCRIPTS_DIR)
 from demo_object_mesh_ip import GraspGenSamplerIP  # noqa: E402
 
 handler = logging.StreamHandler()
@@ -99,19 +111,31 @@ logger = logging.getLogger(__name__)
 PROJECT_ROOT_DIR = Path(__file__).resolve().parents[1]
 TRANSFORM_DIR = PROJECT_ROOT_DIR / "PointCloud_Generation" / "transform_config"
 
-# v2_r095 default paths
+# v2_r095 default paths. Resolve from $IP_ADAPTER_CONFIG / $IP_ADAPTER_CKPT
+# (set by scripts/setup_ip_adapter.env on the lab machine), fallback to the
+# original developer's paths.
 V2_R095_LOG_DIR = Path(
     "/ssd1/CT_GraspGen/GraspGen_Results/logs/robotiq_2f_140_r095_ip_v2_abs_r095"
 )
-V2_R095_CONFIG = V2_R095_LOG_DIR / "config.yaml"
-V2_R095_CKPT = V2_R095_LOG_DIR / "last.pth"
+V2_R095_CONFIG = Path(
+    os.environ.get("IP_ADAPTER_CONFIG") or V2_R095_LOG_DIR / "config.yaml"
+)
+V2_R095_CKPT = Path(os.environ.get("IP_ADAPTER_CKPT") or V2_R095_LOG_DIR / "last.pth")
 
 # Base model paths (for --base_model A/B comparison)
 BASE_MODEL_CONFIG = (
-    PROJECT_ROOT_DIR / "models" / "GraspGenModels" / "checkpoints" / "graspgen_robotiq_2f_140.yml"
+    PROJECT_ROOT_DIR
+    / "models"
+    / "GraspGenModels"
+    / "checkpoints"
+    / "graspgen_robotiq_2f_140.yml"
 )
 BASE_MODEL_CKPT = (
-    PROJECT_ROOT_DIR / "models" / "GraspGenModels" / "checkpoints" / "graspgen_robotiq_2f_140_gen.pth"
+    PROJECT_ROOT_DIR
+    / "models"
+    / "GraspGenModels"
+    / "checkpoints"
+    / "graspgen_robotiq_2f_140_gen.pth"
 )
 
 
@@ -131,41 +155,55 @@ def parse_args():
     parser.add_argument("--transform-config", type=str, default="sim2.json")
     # IP-Adapter args
     parser.add_argument(
-        "--ip_config", type=str, default=str(V2_R095_CONFIG),
+        "--ip_config",
+        type=str,
+        default=str(V2_R095_CONFIG),
         help="Path to training config.yaml (e.g. v2_r095/config.yaml).",
     )
     parser.add_argument(
-        "--ip_ckpt", type=str, default=str(V2_R095_CKPT),
+        "--ip_ckpt",
+        type=str,
+        default=str(V2_R095_CKPT),
         help="Path to IP-Adapter checkpoint .pth (e.g. v2_r095/last.pth).",
     )
     parser.add_argument(
-        "--ip_scale", type=float, default=None,
+        "--ip_scale",
+        type=float,
+        default=None,
         help="Override IP-Adapter alpha scale at inference (None = use trained value).",
     )
     parser.add_argument(
-        "--no_ip_adapter", action="store_true",
+        "--no_ip_adapter",
+        action="store_true",
         help="Skip IP-Adapter patching and run vanilla base model (for ablation). "
-             "WARNING: pairing this with v2_r095 ckpt gives garbage — the prediction_head "
-             "was unfrozen during IP-Adapter training, so it expects IP signal. Use "
-             "--base_model for a proper baseline comparison.",
+        "WARNING: pairing this with v2_r095 ckpt gives garbage — the prediction_head "
+        "was unfrozen during IP-Adapter training, so it expects IP signal. Use "
+        "--base_model for a proper baseline comparison.",
     )
     parser.add_argument(
-        "--base_model", action="store_true",
+        "--base_model",
+        action="store_true",
         help="Shortcut: load NVlabs official robotiq_2f_140 base checkpoint with the "
-             "matching gripper yml, force --no_ip_adapter. Overrides --ip_config / --ip_ckpt.",
+        "matching gripper yml, force --no_ip_adapter. Overrides --ip_config / --ip_ckpt.",
     )
     parser.add_argument(
-        "--gravity", type=str, default="0,0,-1",
+        "--gravity",
+        type=str,
+        default="0,0,-1",
         help="3D gravity direction in object/world frame, comma-separated. "
-             "Default (0,0,-1) assumes Z is up. With identity transform "
-             "(camera frame) this is physically wrong but lets the model run.",
+        "Default (0,0,-1) assumes Z is up. With identity transform "
+        "(camera frame) this is physically wrong but lets the model run.",
     )
     parser.add_argument(
-        "--num_grasps", type=int, default=200,
+        "--num_grasps",
+        type=int,
+        default=200,
         help="Number of grasps to sample.",
     )
     parser.add_argument(
-        "--target", type=str, default="green cup",
+        "--target",
+        type=str,
+        default="green cup",
         help="GroundingDINO prompt for the target object.",
     )
     return parser.parse_args()
@@ -184,7 +222,9 @@ def ensure_transform_config(name: str) -> None:
         json.dump(identity, f, indent=2)
 
 
-def compute_physical_features(obj_pc: np.ndarray, gravity_local: np.ndarray) -> np.ndarray:
+def compute_physical_features(
+    obj_pc: np.ndarray, gravity_local: np.ndarray
+) -> np.ndarray:
     """
     Compute 12D physical features matching v2_r095 training convention
     (dataset_full = unit eigenvectors).
@@ -196,8 +236,8 @@ def compute_physical_features(obj_pc: np.ndarray, gravity_local: np.ndarray) -> 
     cov = np.cov(centered, rowvar=False)
     eigvals, eigvecs = np.linalg.eigh(cov)  # eigvecs columns
     order = np.argsort(eigvals)[::-1]
-    eigvecs_sorted = eigvecs[:, order]            # 3x3, columns are unit eigvecs
-    pca_features = eigvecs_sorted.T.flatten()    # rows = eigvecs, then flatten
+    eigvecs_sorted = eigvecs[:, order]  # 3x3, columns are unit eigvecs
+    pca_features = eigvecs_sorted.T.flatten()  # rows = eigvecs, then flatten
     physical_features = np.concatenate([pca_features, gravity_local]).astype(np.float32)
     assert physical_features.shape == (12,), physical_features.shape
     return physical_features
@@ -212,11 +252,17 @@ def main():
         args.ip_config = str(BASE_MODEL_CONFIG)
         args.ip_ckpt = str(BASE_MODEL_CKPT)
         args.no_ip_adapter = True
-        logger.warning("[--base_model] Using NVlabs official robotiq_2f_140 base ckpt + vanilla model")
+        logger.warning(
+            "[--base_model] Using NVlabs official robotiq_2f_140 base ckpt + vanilla model"
+        )
 
     ensure_transform_config(args.transform_config)
-    gravity_local = np.array([float(x) for x in args.gravity.split(",")], dtype=np.float32)
-    assert gravity_local.shape == (3,), f"--gravity must be 3 numbers, got {gravity_local}"
+    gravity_local = np.array(
+        [float(x) for x in args.gravity.split(",")], dtype=np.float32
+    )
+    assert gravity_local.shape == (3,), (
+        f"--gravity must be 3 numbers, got {gravity_local}"
+    )
 
     # 1. PNG -> point clouds + per-object masks
     logger.info(f"Initializing PointCloudGenerator (use-png={args.use_png}) ...")
@@ -279,7 +325,9 @@ def main():
     if len(grasps_t) == 0:
         logger.error("No grasps returned!")
         return
-    grasps = grasps_t.cpu().numpy() if hasattr(grasps_t, "cpu") else np.asarray(grasps_t)
+    grasps = (
+        grasps_t.cpu().numpy() if hasattr(grasps_t, "cpu") else np.asarray(grasps_t)
+    )
     grasps[:, 3, 3] = 1.0
     logger.warning(f"Got {len(grasps)} grasps")
 
@@ -300,8 +348,14 @@ def main():
 
     color = [200, 0, 200] if not args.no_ip_adapter else [0, 200, 0]
     for i, g in enumerate(grasps):
-        visualize_grasp(vis, f"grasps/{i:03d}", g, color=color,
-                        gripper_name=gripper_name, linewidth=1.5)
+        visualize_grasp(
+            vis,
+            f"grasps/{i:03d}",
+            g,
+            color=color,
+            gripper_name=gripper_name,
+            linewidth=1.5,
+        )
 
     print(f"Visualized {len(grasps)} grasps in meshcat (gripper={gripper_name}).")
     if args.base_model:

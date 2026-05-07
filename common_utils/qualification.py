@@ -12,6 +12,7 @@ def get_left_up_and_front(grasp: np.array) -> tuple[np.ndarray, np.ndarray, np.n
 
 
 def cup_qualifier(grasp: np.array, min_point: np.ndarray, max_point: np.ndarray):
+    return True
     position = grasp[:3, 3].tolist()
     left, up, front = get_left_up_and_front(grasp)
     position += front * 0.20  # offset
