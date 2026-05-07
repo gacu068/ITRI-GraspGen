@@ -171,6 +171,10 @@ export GRASPGEN_FORK_DIR="$fork"
 export IP_ADAPTER_WEIGHTS_DIR="$weights_dir"
 export IP_ADAPTER_CONFIG="$weights_dir/config.yaml"
 export IP_ADAPTER_CKPT="$weights_dir/last.pth"
+# Force UTF-8 for file I/O regardless of shell locale. The fork's gripper YAMLs
+# (e.g. robotiq_2f_140_r095.yaml) contain non-ASCII chars and the fork's
+# load_gripper_yaml_file opens them without encoding=, so an ASCII locale crashes.
+export PYTHONUTF8=1
 EOF
     log "Wrote $ENV_FILE"
 }

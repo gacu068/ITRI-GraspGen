@@ -76,7 +76,7 @@
             "program": "${file}",
             "console": "integratedTerminal",
             "args": [
-            
+                "--ip_config", "$IP_ADAPTER_CONFIG", "--ip_ckpt", "$IP_ADAPTER_CKPT"
             ]
         }
 

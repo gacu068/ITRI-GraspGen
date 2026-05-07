@@ -19,7 +19,6 @@ from grasp_gen.utils.meshcat_utils import (
     visualize_grasp,
     visualize_pointcloud,
 )
-from grasp_gen.utils.point_cloud_utils import filter_colliding_grasps
 from common_utils.actions_format_checker import MoveItem
 
 
@@ -37,12 +36,31 @@ _FORK_SCRIPTS_DIR = (
 )
 
 
+def _patch_grasp_gen_yaml_utf8():
+    """Force UTF-8 on grasp_gen's gripper YAML loader.
+
+    The fork's `grasp_gen.robot.load_gripper_yaml_file` calls `open(path, "r")`
+    with no encoding=, so a non-UTF-8 locale crashes on YAMLs that contain
+    non-ASCII chars (e.g. robotiq_2f_140_r095.yaml has a `→`). We can't edit
+    the fork from here, so we monkey-patch the loader before SamplerIP runs.
+    """
+    import grasp_gen.robot as _gr
+    import yaml
+
+    def _utf8_load_gripper_yaml_file(yaml_path):
+        with open(yaml_path, "r", encoding="utf-8") as f:
+            return yaml.safe_load(f)
+
+    _gr.load_gripper_yaml_file = _utf8_load_gripper_yaml_file
+
+
 def _lazy_load_GraspGenSamplerIP():
     global _GraspGenSamplerIP
     if _GraspGenSamplerIP is not None:
         return _GraspGenSamplerIP
     if _FORK_SCRIPTS_DIR not in sys.path:
         sys.path.insert(0, _FORK_SCRIPTS_DIR)
+    _patch_grasp_gen_yaml_utf8()
     from demo_object_mesh_ip import GraspGenSamplerIP
 
     _GraspGenSamplerIP = GraspGenSamplerIP
@@ -440,6 +458,22 @@ class GraspGeneratorUI:
 
             if ip_ckpt is None:
                 raise ValueError("ip_ckpt is required when ip_config is set")
+            assert ip_config is not None  # implied by self.use_ip_adapter
+            ip_config = os.path.expanduser(os.path.expandvars(ip_config))
+            ip_ckpt = os.path.expanduser(os.path.expandvars(ip_ckpt))
+            for label, path in (("ip_config", ip_config), ("ip_ckpt", ip_ckpt)):
+                if "$" in path:
+                    raise ValueError(
+                        f"{label} contains an unresolved environment variable: {path!r}. "
+                        "Did you forget to `source scripts/setup_ip_adapter.env` "
+                        "(or did the shell pass it through single quotes)?"
+                    )
+                if not os.path.isfile(path):
+                    raise FileNotFoundError(
+                        f"{label} not found: {path!r}. "
+                        "Run `bash scripts/setup_ip_adapter.sh --check` and source "
+                        "scripts/setup_ip_adapter.env, or pass an absolute path."
+                    )
             logger.warning(
                 f"[IP-Adapter] config={ip_config} ckpt={ip_ckpt} force_no_ip={force_no_ip}"
             )
