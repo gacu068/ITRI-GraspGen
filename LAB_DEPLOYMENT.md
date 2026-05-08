@@ -363,6 +363,42 @@ ZED SDK version mismatch. The pinned wheel is `pyzed 5.0`. Lab must have
 ZED SDK 5.0 installed. Newer or older SDK → fail. Either upgrade the SDK
 or pin a different wheel in `pyproject.toml` (last resort).
 
+### `UnicodeDecodeError` loading gripper YAML
+
+Hit at the lab on 2026-05-07 during `GraspGenSamplerIP` init. Triggered
+when shell locale is not UTF-8 (`echo $LANG` returns `C` or `POSIX`)
+combined with the fork's
+`grasp_gen/robot.py:load_gripper_yaml_file` opening YAML without an
+`encoding=` argument. The v2_r095 gripper YAML
+(`robotiq_2f_140_r095.yaml`) contains `→` and other non-ASCII chars.
+
+Two layers of fix are already shipped on `CT_adapter`:
+
+1. **`scripts/setup_ip_adapter.sh` exports `PYTHONUTF8=1`** in the
+   generated `setup_ip_adapter.env`. Verify after running setup:
+   ```bash
+   grep PYTHONUTF8 scripts/setup_ip_adapter.env
+   source scripts/setup_ip_adapter.env
+   ```
+2. **`common_utils/graspgen_utils.py:_patch_grasp_gen_yaml_utf8()`**
+   monkey-patches the loader at `GraspGenSamplerIP` import time. Triggers
+   automatically when `GraspGeneratorUI` is constructed in IP mode.
+
+If `UnicodeDecodeError` still appears, either:
+- You forgot to `source scripts/setup_ip_adapter.env` after running the
+  setup script (so `PYTHONUTF8` isn't in the process env), OR
+- You're calling `GraspGenSamplerIP` outside `GraspGeneratorUI` — the
+  monkey-patch only fires through that wrapper.
+
+Quick workaround:
+```bash
+PYTHONUTF8=1 uv run scripts/workflow_with_isaacsim.py ...
+```
+
+Do NOT "fix" by editing `~/GraspGen-IP/grasp_gen/robot.py` — the
+monkey-patch is intentional so the fork can stay in sync with future
+upstream changes without diverging on this single line.
+
 ### `[INFO] All checkpoint keys matched perfectly.` not shown / many warnings
 
 Architecture mismatch between checkpoint and `cfg.diffusion`. Probably

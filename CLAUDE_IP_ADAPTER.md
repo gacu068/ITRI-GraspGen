@@ -97,7 +97,24 @@ In order of likelihood:
    pin a different `pyzed` wheel in `pyproject.toml` (last resort, breaks
    `uv.lock`).
 
-3. **IP grasps cluster nonsensically / collide constantly**
+3. **`UnicodeDecodeError` while loading gripper YAML** (during
+   `GraspGenSamplerIP` init / first IP-Adapter call; observed at lab on
+   2026-05-07)
+   → Shell locale isn't UTF-8 (`LANG=C`/`POSIX`) AND the fork's
+   `grasp_gen/robot.py:load_gripper_yaml_file` opens YAML without
+   `encoding=`. v2_r095's `robotiq_2f_140_r095.yaml` contains `→` and
+   other non-ASCII chars. Two-layer fix already shipped:
+     - `scripts/setup_ip_adapter.sh` exports `PYTHONUTF8=1` in the generated
+       `setup_ip_adapter.env`
+     - `common_utils/graspgen_utils.py:_patch_grasp_gen_yaml_utf8()`
+       monkey-patches the loader before `GraspGenSamplerIP` is imported
+   If it still triggers, the user skipped `source scripts/setup_ip_adapter.env`,
+   or invoked `GraspGenSamplerIP` outside `GraspGeneratorUI` (which is
+   what calls the monkey-patch). Quick workaround: prefix command with
+   `PYTHONUTF8=1`. Do NOT "fix" by editing the fork's `robot.py` — the
+   monkey-patch is intentional so the fork can stay in sync with upstream.
+
+4. **IP grasps cluster nonsensically / collide constantly**
    → Likely gravity/PCA OOD. Check:
      - `transform_config/sim2.json` produces Z-up world frame
      - Default `--gravity 0,0,-1` matches lab's world convention
@@ -105,18 +122,22 @@ In order of likelihood:
        `dataset_full` → unit PCA, `dataset_full_length` → eigval-scaled.
        `compute_physical_features` currently outputs unit.
 
-4. **`workflow_with_isaacsim.py` retries forever, "Failed" from cuRobo**
+5. **`workflow_with_isaacsim.py` retries forever, "Failed" from cuRobo**
    → IP-Adapter grasps survive `cup_qualifier` filter but fail cuRobo
    collision check. Three suspects:
      - `cup_qualifier` is hard-coded for Z-up upright cups; if the lab
-       uses non-cup objects, swap qualifier in the action JSON
+       uses non-cup objects, swap qualifier in the action JSON.
+       (Lab branch as of 2026-05-07 already short-circuits this with
+       `return True` — that's intentional, not a bug to revert.)
      - `flip_upside_down_grasps` (graspgen_utils.py) flips grasps with
        `up_z<0`; for objects IP-Adapter intentionally grasps from below
        this fights the model
      - cuRobo collision against scene PC + table; IP grasps may approach
-       from physically-blocked angles in poses far from training distribution
+       from physically-blocked angles in poses far from training distribution.
+       (Lab branch already comments out `filter_colliding_grasps` in
+       `_generate_grasps`. Intentional — don't re-enable without checking.)
 
-5. **`gripper_name` mismatch** (gripper_server.py errors)
+6. **`gripper_name` mismatch** (gripper_server.py errors)
    → v2_r095 has `gripper_name: robotiq_2f_140_r095` (retreat-fix variant).
    Hardware is identical to `robotiq_2f_140`. If ROS2 server hard-codes
    the name, hot-fix: alias in gripper_server, or rename in v2_r095's
